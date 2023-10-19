@@ -1,0 +1,85 @@
+---
+- name: Preconfig
+  hosts: demo
+  tasks:
+    - name: Installing Docker
+      become: true
+      block:
+        - name: Adding Universe
+          apt_repository: 
+            repo: "deb http://us.archive.ubuntu.com/ubuntu/ {{ ansible_distribution_release }} universe"
+            state: present
+          when: ansible_facts['distribution'] == 'Ubuntu'
+
+        - name: Installing additional packages
+          apt: name={{ item }} state=latest update_cache=true cache_valid_time=86400
+          loop: [ 'apt-transport-https', 'ca-certificates', 'curl', 'software-properties-common', 'python3-pip', 'virtualenv', 'python3-setuptools' ]
+
+        - name: Adding Docker GPG apt Key
+          apt_key:
+            url: https://download.docker.com/linux/{{ 'ubuntu' if ansible_facts['distribution'] == 'Ubuntu' else 'debian' }}/gpg
+            state: present
+            keyring: /usr/share/keyrings/docker-archive-keyring.gpg
+
+        - name: Adding Docker Repository
+          apt_repository:
+            repo: >
+              deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg]
+              https://download.docker.com/linux/{{ 'ubuntu' if ansible_facts['distribution'] == 'Ubuntu' else 'debian' }}
+              {{ ansible_distribution_release }} stable
+            state: present
+            update-cache: true
+            filename: docker
+
+        - name: Updating apt and install docker-ce
+          apt: update_cache=true name=docker-ce state=latest
+
+        # https://docs.ansible.com/ansible/latest/collections/ansible/builtin/pip_module.html
+        - name: Installing Docker Module for Python
+          pip:
+            name: docker
+
+        # https://docs.ansible.com/ansible/latest/collections/ansible/builtin/service_module.html
+        - name: Checking that Docker is installed and rebooted
+          service:
+            name: docker
+            state: restarted
+            enabled: true
+
+    - name: Installing Docker-Compose
+      become: true
+      block:
+        # https://docs.ansible.com/ansible/latest/collections/ansible/builtin/uri_module.html
+        # "uri" ansible collection let you make GET, POST request
+        - name: Getting the last Docker-Compose version
+          uri:
+            url : https://api.github.com/repos/docker/compose/releases/latest
+            body_format: json
+          # save data in page variable
+          register: page
+        
+        # https://docs.ansible.com/ansible/latest/collections/ansible/builtin/get_url_module.html
+        - name: Installing Docker-Compose from official github repo
+          remote_user: ansible_ubuntu_demo
+          get_url:
+            url : "https://github.com/docker/compose/releases/download/{{ page.json.tag_name }}/docker-compose-Linux-x86_64"
+            # where we download
+            dest: /usr/local/bin/docker-compose
+            # chmod 'u+x,g+x' or 0755
+            mode: 0755
+            
+    - name: Finishing installing
+      become: true
+      block:
+        - name: Adding user to the Docker group
+          user:
+            name: "{{ ansible_user }}"
+            groups: docker
+            append: true
+
+        - name: Rebooting server
+          reboot:
+
+# ansible-playbook -i demo.ini config.yml -K
+# ansible-playbook -i demo.ini config.yml
+# ansible-lint config.yml
